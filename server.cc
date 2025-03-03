@@ -82,7 +82,7 @@ main(void) {
 
   /* Create a resource that the server can respond to with information */
   resource = coap_resource_init(coap_make_str_const("hello"), 0);
-  coap_register_handler(resource, COAP_REQUEST_GET,
+  coap_register_request_handler(resource, COAP_REQUEST_GET,
                         [](auto, auto,
                            const coap_pdu_t *request,
                            auto, coap_pdu_t *response) {
@@ -96,7 +96,7 @@ main(void) {
 
   /* Create another resource that the server can respond to with information */
   resource = coap_resource_init(coap_make_str_const("hello/my"), 0);
-  coap_register_handler(resource, COAP_REQUEST_GET,
+  coap_register_request_handler(resource, COAP_REQUEST_GET,
                         [](auto, auto,
                            const coap_pdu_t *request,
                            auto, coap_pdu_t *response) {
