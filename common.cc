@@ -4,9 +4,6 @@
  */
 
 #include <cstdio>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
 
 #include "common.hh"
 
