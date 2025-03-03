@@ -30,7 +30,11 @@ if(NOT LIBCOAP_LIBRARIES)
 endif()
 
 # Add compiler warnings
-add_compile_options(-Wall -Wextra)
+if(MSVC)
+	add_compile_options(/W4)
+else()
+	add_compile_options(-Wall -Wextra)
+endif()
 
 # Define executables
 add_executable(client client.cc common.cc)
