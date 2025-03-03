@@ -34,7 +34,7 @@ add_compile_options(-Wall -Wextra)
 
 # Define executables
 add_executable(client client.cc common.cc)
-add_executable(server server.cc common.cc)
+add_executable(server server.cc)
 
 # Link libraries
 target_link_libraries(client PRIVATE ${LIBCOAP_LIBRARIES})
