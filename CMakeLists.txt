@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(libcoap-minimal CXX)
 
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find libcoap headers and library
@@ -39,11 +39,14 @@ endif()
 # Define executables
 add_executable(client client.cc common.cc)
 add_executable(server server.cc)
+add_executable(test test.cpp)
 
 # Link libraries
 target_link_libraries(client PRIVATE ${LIBCOAP_LIBRARIES})
 target_link_libraries(server PRIVATE ${LIBCOAP_LIBRARIES})
+target_link_libraries(test PRIVATE ${LIBCOAP_LIBRARIES})
 
 # Include directories
 target_include_directories(client PRIVATE ${LIBCOAP_INCLUDE_DIRS})
 target_include_directories(server PRIVATE ${LIBCOAP_INCLUDE_DIRS})
+target_include_directories(test PRIVATE ${LIBCOAP_INCLUDE_DIRS})
