@@ -1,0 +1,38 @@
+{
+	"configurations": [
+		{
+			"type": "cppdbg",
+			"request": "launch",
+			"name": "Launch Server",
+			"program": "${workspaceFolder}/builddir/server",
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "CMake: build",
+			"setupCommands": [
+				// Pass SIGINT to the process to prevent the kill-server task from breaking into the
+				// debugger.
+				{
+					"description": "Pass SIGINT to process",
+					"text": "handle SIGINT nostop pass",
+					"ignoreFailures": true
+				}
+			]
+		},
+		{
+			"type": "cppdbg",
+			"request": "launch",
+			"name": "Launch Client",
+			"program": "${workspaceFolder}/builddir/client",
+			"args": ["coap://localhost/hello"],
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "CMake: build",
+			"postDebugTask": "kill-server"
+		}
+	],
+	"compounds": [
+		{
+			"name": "Server/Client",
+			"configurations": ["Launch Server", "Launch Client"],
+			"stopAll": true
+		}
+	]
+}
