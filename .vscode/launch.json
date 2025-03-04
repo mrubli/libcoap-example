@@ -26,6 +26,14 @@
 			"cwd": "${workspaceFolder}",
 			"preLaunchTask": "CMake: build",
 			"postDebugTask": "kill-server"
+		},
+		{
+			"type": "cppdbg",
+			"request": "launch",
+			"name": "Launch Test",
+			"program": "${workspaceFolder}/builddir/test",
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "CMake: build"
 		}
 	],
 	"compounds": [
