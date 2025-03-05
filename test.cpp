@@ -1,4 +1,5 @@
 #include <print>
+#include <thread>
 
 #include <coap3/coap.h>
 
@@ -28,18 +29,9 @@ void custom_close(coap_session_t *session)
 	std::println("custom_close: session: {}", (void *)session);
 }
 
-} // anonymous namespace
-
-
-int main(int argc, char *argv[])
+int run_client()
 {
-	(void)argc;
-	(void)argv;
-
-	std::println("Testing ...");
-
-	coap_startup();
-	coap_set_log_level(COAP_LOG_DEBUG);
+	std::println("[client] starting up");
 
 	coap_context_t *ctx = coap_new_context(nullptr);
 
@@ -61,7 +53,7 @@ int main(int argc, char *argv[])
 
 	while (true)
 	{
-		std::println("coap_io_process");
+		std::println("[client] coap_io_process");
 		coap_io_process(ctx, COAP_IO_WAIT);
 	}
 
@@ -69,6 +61,22 @@ int main(int argc, char *argv[])
 	coap_session_release(session);
 	coap_free_context(ctx);
 	coap_cleanup();
+}
+
+} // anonymous namespace
+
+
+int main(int argc, char *argv[])
+{
+	(void)argc;
+	(void)argv;
+
+	coap_startup();
+	coap_set_log_level(COAP_LOG_DEBUG);
+
+	auto client_thread = std::thread{ run_client };
+
+	client_thread.join();
 
 	return 0;
 }
