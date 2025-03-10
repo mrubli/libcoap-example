@@ -29,6 +29,15 @@ if(NOT LIBCOAP_LIBRARIES)
 	message(FATAL_ERROR "Could not find libcoap library in ${LIBCOAP_BUILDDIR}.")
 endif()
 
+# Retrieve fmtlib
+include(FetchContent)
+FetchContent_Declare(
+	fmt
+	GIT_REPOSITORY https://github.com/fmtlib/fmt
+	GIT_TAG 11.1.4
+)
+FetchContent_MakeAvailable(fmt)
+
 # Add compiler warnings
 if(MSVC)
 	add_compile_options(/W4)
@@ -44,7 +53,7 @@ add_executable(test test.cpp)
 # Link libraries
 target_link_libraries(client PRIVATE ${LIBCOAP_LIBRARIES})
 target_link_libraries(server PRIVATE ${LIBCOAP_LIBRARIES})
-target_link_libraries(test PRIVATE ${LIBCOAP_LIBRARIES})
+target_link_libraries(test PRIVATE ${LIBCOAP_LIBRARIES} fmt::fmt)
 
 # Include directories
 target_include_directories(client PRIVATE ${LIBCOAP_INCLUDE_DIRS})
