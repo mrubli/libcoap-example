@@ -11,6 +11,10 @@
 #include <fmt/ranges.h>
 
 
+#define COAP_SOCKET_CAN_READ     0x0100  /**< non blocking socket can now read without blocking */
+#define COAP_SOCKET_CAN_ACCEPT   0x0400  /**< non blocking server socket can now accept without blocking */
+
+
 // MARK: Print helpers
 
 template<>
@@ -128,7 +132,7 @@ ssize_t custom_client_send(coap_context_t *ctx, const uint8_t *data, size_t data
 	auto request = std::vector<uint8_t>{ data, data + datalen };
 	println_client("write: queuing request of size {}: {}", datalen, request);
 	requestQueue.push(std::move(request));
-	coap_io_custom_have_new_data(serverCtx, 1);
+	coap_io_custom_have_new_data(serverCtx, COAP_SOCKET_CAN_READ, 1);
 
 	return datalen;
 }
@@ -267,7 +271,7 @@ ssize_t custom_server_send(coap_context_t *ctx, const uint8_t *data, size_t data
 	auto response = std::vector<uint8_t>{ data, data + datalen };
 	println_server("send: queuing response of size {}: {}", datalen, response);
 	responseQueue.push(std::move(response));
-	coap_io_custom_have_new_data(clientCtx, 1);
+	coap_io_custom_have_new_data(clientCtx, COAP_SOCKET_CAN_READ, 1);
 
 	return datalen;
 }
