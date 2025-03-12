@@ -11,6 +11,7 @@
 #include <fmt/ranges.h>
 
 
+// Copied from coap_io_internal.h
 #define COAP_SOCKET_CAN_READ     0x0100  /**< non blocking socket can now read without blocking */
 #define COAP_SOCKET_CAN_ACCEPT   0x0400  /**< non blocking server socket can now accept without blocking */
 
@@ -73,6 +74,8 @@ void println_client(const char *format, Args&& ...args)
 namespace
 {
 
+constexpr auto UseTcp = !false;
+
 auto requestQueue = std::queue<std::vector<uint8_t>>{};
 auto requestMutex = std::mutex{};
 
@@ -88,6 +91,11 @@ coap_context_t *serverCtx = nullptr;
 void custom_client_connect(coap_context_t *ctx)
 {
 	println_client("connect: ctx: {}", (void *)ctx);
+
+	if constexpr (UseTcp)
+	{
+		coap_io_custom_have_new_data(serverCtx, COAP_SOCKET_CAN_ACCEPT, 1);
+	}
 }
 
 void custom_client_close(coap_context_t *ctx)
@@ -132,7 +140,11 @@ ssize_t custom_client_send(coap_context_t *ctx, const uint8_t *data, size_t data
 	auto request = std::vector<uint8_t>{ data, data + datalen };
 	println_client("write: queuing request of size {}: {}", datalen, request);
 	requestQueue.push(std::move(request));
-	coap_io_custom_have_new_data(serverCtx, COAP_SOCKET_CAN_READ, 1);
+
+	if constexpr (!UseTcp)
+	{
+		coap_io_custom_have_new_data(serverCtx, COAP_SOCKET_CAN_READ, 1);
+	}
 
 	return datalen;
 }
@@ -152,6 +164,7 @@ void run_client()
 		.close   = custom_client_close,
 		.read    = custom_client_read,
 		.send    = custom_client_send,
+		.accept  = nullptr,
 	};
 	coap_io_custom_set_callbacks(clientCtx, &custom_callbacks);
 
@@ -183,7 +196,9 @@ void run_client()
 	coap_address_t dst;
 	coap_uri_t uri;
 	{
-		const char *url = "coap://localhost:1234/hello?foo=bar";
+		const char *url = UseTcp
+		                ? "coap+tcp://localhost:1234/hello?foo=bar"
+		                : "coap://localhost:1234/hello?foo=bar";
 		coap_split_uri((const unsigned char *)url, strlen(url), &uri);
 		coap_addr_info_t *addr_info = coap_resolve_address_info(&uri.host,
 			uri.port, uri.port, uri.port, uri.port,
@@ -192,7 +207,7 @@ void run_client()
 		coap_free_address_info(addr_info);
 	}
 
-	coap_session_t *session = coap_new_client_session(clientCtx, NULL, &dst, COAP_PROTO_UDP);
+	coap_session_t *session = coap_new_client_session(clientCtx, NULL, &dst, UseTcp ? COAP_PROTO_TCP : COAP_PROTO_UDP);
 
 	coap_pdu_t *pdu = coap_pdu_init(COAP_MESSAGE_CON, COAP_REQUEST_CODE_GET, 0, 16);
 
@@ -276,6 +291,11 @@ ssize_t custom_server_send(coap_context_t *ctx, const uint8_t *data, size_t data
 	return datalen;
 }
 
+void custom_server_accept(coap_context_t *ctx)
+{
+	println_server("accept: ctx: {}", (void *)ctx);
+}
+
 
 void run_server(bool& exit)
 {
@@ -287,6 +307,7 @@ void run_server(bool& exit)
 		.close   = custom_server_close,
 		.read    = custom_server_read,
 		.send    = custom_server_send,
+		.accept  = custom_server_accept,
 	};
 	coap_io_custom_set_callbacks(serverCtx, &custom_callbacks);
 
@@ -298,7 +319,7 @@ void run_server(bool& exit)
 		0, coap_get_available_scheme_hint_bits(0, 0, COAP_PROTO_NONE), COAP_RESOLVE_TYPE_LOCAL);
 	assert(addr_info != nullptr);
 
-	coap_endpoint_t *ep = coap_new_endpoint(serverCtx, &addr_info->addr, addr_info->proto);
+	coap_endpoint_t *ep = coap_new_endpoint(serverCtx, &addr_info->addr, UseTcp ? COAP_PROTO_TCP : COAP_PROTO_UDP);
 	assert(ep != nullptr);
 	coap_free_address_info(addr_info);
 
