@@ -1,6 +1,8 @@
 #include <mutex>
+#include <numeric>
 #include <print>
 #include <queue>
+#include <span>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -74,7 +76,8 @@ void println_client(const char *format, Args&& ...args)
 namespace
 {
 
-constexpr auto UseTcp = !false;
+constexpr auto UseTcp = false;
+constexpr auto UsePayload = true;
 
 auto requestQueue = std::queue<std::vector<uint8_t>>{};
 auto requestMutex = std::mutex{};
@@ -84,6 +87,27 @@ auto responseMutex = std::mutex{};
 
 coap_context_t *clientCtx = nullptr;
 coap_context_t *serverCtx = nullptr;
+
+const auto LargeData = [] {
+	auto data = std::vector<uint8_t>{};
+	data.resize(1722);	// 150% of the max PDU size (1148)
+	std::iota(data.begin(), data.end(), 0);
+	return data;
+}();
+
+
+uint32_t calculateCrc32(std::span<const uint8_t> data)
+{
+	constexpr uint32_t polynomial = 0xedb88320;
+	uint32_t crc = 0xffffffff;
+	for (uint8_t byte : data)
+	{
+		crc ^= byte;
+		for (int i = 0; i < 8; i++)
+			crc = (crc >> 1) ^ ((crc & 1) ? polynomial : 0);
+	}
+	return ~crc;
+}
 
 
 // MARK: Client
@@ -159,6 +183,8 @@ void run_client()
 
 	clientCtx = coap_new_context(nullptr);
 
+	coap_context_set_block_mode(clientCtx, COAP_BLOCK_USE_LIBCOAP | COAP_BLOCK_SINGLE_BODY);
+
 	const auto custom_callbacks = coap_io_custom_callbacks_t{
 		.connect = custom_client_connect,
 		.close   = custom_client_close,
@@ -209,11 +235,29 @@ void run_client()
 
 	coap_session_t *session = coap_new_client_session(clientCtx, NULL, &dst, UseTcp ? COAP_PROTO_TCP : COAP_PROTO_UDP);
 
-	coap_pdu_t *pdu = coap_pdu_init(COAP_MESSAGE_CON, COAP_REQUEST_CODE_GET, 0, 16);
+	const auto maxPduSize = coap_session_max_pdu_size(session);
+	println_client("max PDU size: {}", maxPduSize);
+	coap_pdu_t *pdu = coap_pdu_init(COAP_MESSAGE_CON, COAP_REQUEST_CODE_GET, 0, maxPduSize);
 
 	coap_optlist_t *optlist = nullptr;
+#if 1
 	coap_uri_into_options(&uri, &dst, &optlist, 0, nullptr, 0);
-	coap_add_optlist_pdu(pdu, &optlist);
+	assert(1 == coap_add_optlist_pdu(pdu, &optlist));
+#else
+	if (uri.path.length > 0)
+	{
+		assert(0 < coap_add_option(pdu, COAP_OPTION_URI_PATH, uri.path.length, uri.path.s));
+	}
+	if (uri.query.length > 0)
+	{
+		assert(0 < coap_add_option(pdu, COAP_OPTION_URI_QUERY, uri.query.length, uri.query.s));
+	}
+#endif
+	if (UsePayload)
+	{
+		println_client("crc of data: {:#010x}", calculateCrc32(LargeData));
+		assert(1 == coap_add_data_large_request(session, pdu, LargeData.size(), LargeData.data(), nullptr, nullptr));
+	}
 
 	println_client("sending PDU:");
 	std::print("  ");
@@ -302,6 +346,8 @@ void run_server(bool& exit)
 	println_server("starting up");
 	serverCtx = coap_new_context(nullptr);
 
+	coap_context_set_block_mode(serverCtx, COAP_BLOCK_USE_LIBCOAP | COAP_BLOCK_SINGLE_BODY);
+
 	const auto custom_callbacks = coap_io_custom_callbacks_t{
 		.connect = custom_server_connect,
 		.close   = custom_server_close,
@@ -325,13 +371,36 @@ void run_server(bool& exit)
 
 	coap_resource_t *resource = coap_resource_init(coap_make_str_const("hello"), 0);
 	coap_register_request_handler(resource, COAP_REQUEST_GET,
-		[] (auto, auto, const coap_pdu_t *request, const coap_string_t *query, coap_pdu_t *response) {
+		[] (auto /* resource */, auto /* session */, const coap_pdu_t *request, const coap_string_t *query, coap_pdu_t *response) {
 			println_server("received request:");
 			std::print("  ");
 			coap_show_pdu(COAP_LOG_WARN, request);
 
-			auto queryStr = std::string_view{ reinterpret_cast<const char *>(query->s), query->length };
-			println_server("query: {}", queryStr);
+			{
+				auto queryStr = std::string_view{ reinterpret_cast<const char *>(query->s), query->length };
+				println_server("query: {}", queryStr);
+			}
+			{
+				size_t dataSize = 0;
+				const uint8_t *data = nullptr;
+				coap_get_data(request, &dataSize, &data);
+				const auto dataSpan = std::span{ data, dataSize };
+				assert(UsePayload != dataSpan.empty());
+				if (!dataSpan.empty())
+				{
+					const auto crc = calculateCrc32(dataSpan);
+					println_server("crc of data: {:#010x}", crc);
+					if (crc == calculateCrc32(LargeData))
+					{
+						println_server("crc matches");
+					}
+					else
+					{
+						println_server("ERROR: crc mismatch");
+					}
+					println_server("data: {}", dataSpan);
+				}
+			}
 
 			coap_pdu_set_code(response, COAP_RESPONSE_CODE_CONTENT);
 			coap_add_data(response, 5, (const uint8_t *)"world");
