@@ -144,7 +144,7 @@ ssize_t custom_client_read(coap_context_t *ctx, uint8_t *data, size_t datalen)
 
 	if (response.size() <= datalen)
 	{
-		println_client("read: returning response of size {}: {}", response.size(), response);
+		//println_client("read: returning response of size {}: {}", response.size(), response);
 		std::copy(response.begin(), response.end(), data);
 		return response.size();
 	}
@@ -162,7 +162,7 @@ ssize_t custom_client_send(coap_context_t *ctx, const uint8_t *data, size_t data
 
 	const auto locky = std::lock_guard{ requestMutex };
 	auto request = std::vector<uint8_t>{ data, data + datalen };
-	println_client("write: queuing request of size {}: {}", datalen, request);
+	//println_client("write: queuing request of size {}: {}", datalen, request);
 	requestQueue.push(std::move(request));
 
 	if constexpr (!UseTcp)
@@ -310,7 +310,7 @@ ssize_t custom_server_read(coap_context_t *ctx, uint8_t *data, size_t datalen)
 
 	if (request.size() <= datalen)
 	{
-		println_server("read: returning request of size {}: {}", request.size(), request);
+		//println_server("read: returning request of size {}: {}", request.size(), request);
 		std::copy(request.begin(), request.end(), data);
 		return request.size();
 	}
@@ -328,7 +328,7 @@ ssize_t custom_server_send(coap_context_t *ctx, const uint8_t *data, size_t data
 
 	const auto locky = std::lock_guard{ responseMutex };
 	auto response = std::vector<uint8_t>{ data, data + datalen };
-	println_server("send: queuing response of size {}: {}", datalen, response);
+	//println_server("send: queuing response of size {}: {}", datalen, response);
 	responseQueue.push(std::move(response));
 	coap_io_custom_have_new_data(clientCtx, COAP_SOCKET_CAN_READ, 1);
 
