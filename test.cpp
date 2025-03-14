@@ -235,9 +235,21 @@ void run_client()
 
 	coap_session_t *session = coap_new_client_session(clientCtx, NULL, &dst, UseTcp ? COAP_PROTO_TCP : COAP_PROTO_UDP);
 
+	// Create a token associated with the session
+	uint8_t token[4] = { 0x42, 0x00, 0x00, 0x00 };
+	coap_session_init_token(session, 4, token);
+
 	const auto maxPduSize = coap_session_max_pdu_size(session);
 	println_client("max PDU size: {}", maxPduSize);
 	coap_pdu_t *pdu = coap_pdu_init(COAP_MESSAGE_CON, COAP_REQUEST_CODE_GET, 0, maxPduSize);
+
+	// Add a token to the PDU (optional)
+	{
+		size_t tokenLength = 0;
+		coap_session_new_token(session, &tokenLength, token);
+		assert(tokenLength == sizeof(token));
+	}
+	coap_add_token(pdu, sizeof(token), token);
 
 	coap_optlist_t *optlist = nullptr;
 #if 1
