@@ -9,6 +9,7 @@
 
 #include <coap3/coap.h>
 #include <fmt/format.h>
+#include <fmt/chrono.h>
 #include <fmt/color.h>
 #include <fmt/ranges.h>
 
@@ -77,7 +78,8 @@ namespace
 {
 
 constexpr auto UseTcp = false;
-constexpr auto UsePayload = true;
+constexpr auto UsePayload = !true;
+constexpr auto TestObservable = true;
 
 auto requestQueue = std::queue<std::vector<uint8_t>>{};
 auto requestMutex = std::mutex{};
@@ -195,7 +197,7 @@ void run_client()
 	coap_io_custom_set_callbacks(clientCtx, &custom_callbacks);
 
 	coap_register_response_handler(clientCtx,
-		[] (auto, auto, const coap_pdu_t *received, auto) {
+		[] (coap_session_t *session, auto, const coap_pdu_t *received, auto) {
 			size_t len;
 			const uint8_t *databuf;
 			size_t offset;
@@ -207,12 +209,26 @@ void run_client()
 
 			if (coap_get_data_large(received, &len, &databuf, &offset, &total))
 			{
-				const auto response = std::vector<uint8_t>{ databuf, databuf + len };
+				const auto response = std::string_view{ reinterpret_cast<const char *>(databuf), len };
 				println_client("response: {}", response);
-				if (response == std::vector<uint8_t>{ 'w', 'o', 'r', 'l', 'd' })
+				if (response == "world")
 				{
 					println_client("yay, response is correct. exit.");
 					exit = true;
+				}
+				else if (response == "tock")
+				{
+					constexpr auto MaxTockCount = 3;
+					static int tockCount = 0;
+					tockCount++;
+					println_client("yay, tock response {}", tockCount);
+					if (tockCount >= MaxTockCount)
+					{
+						println_client("canceling observable after {} tocks", tockCount);
+						uint8_t token[4] = { 0x42, 0x00, 0x00, 0x00 };
+						auto binaryToken = coap_binary_t{ .length = sizeof(token), .s = token };
+						assert(1 == coap_cancel_observe(session, &binaryToken, COAP_MESSAGE_CON)); // or COAP_MESSAGE_NON
+					}
 				}
 			}
 			return COAP_RESPONSE_OK;
@@ -220,12 +236,19 @@ void run_client()
 	);
 
 	coap_address_t dst;
+	std::string url;	// must outlive uri
 	coap_uri_t uri;
 	{
-		const char *url = UseTcp
-		                ? "coap+tcp://localhost:1234/hello?foo=bar"
-		                : "coap://localhost:1234/hello?foo=bar";
-		coap_split_uri((const unsigned char *)url, strlen(url), &uri);
+		const auto protocol = UseTcp ? "coap+tcp" : "coap";
+		const auto host     = "localhost";
+		const auto port     = 1234;
+		const auto path     = TestObservable ? "tick" : "hello";
+		const auto query    = TestObservable ? "interval=8000" : "foo=bar";
+
+		url = fmt::format("{}://{}:{}/{}?{}", protocol, host, port, path, query);
+
+		// Note that the resulting coap_uri_t will point into the url string.
+		coap_split_uri(reinterpret_cast<const uint8_t *>(url.c_str()), url.size(), &uri);
 		coap_addr_info_t *addr_info = coap_resolve_address_info(&uri.host,
 			uri.port, uri.port, uri.port, uri.port,
 			AF_UNSPEC, COAP_URI_SCHEME_COAP_BIT, COAP_RESOLVE_TYPE_REMOTE);
@@ -265,6 +288,11 @@ void run_client()
 		assert(0 < coap_add_option(pdu, COAP_OPTION_URI_QUERY, uri.query.length, uri.query.s));
 	}
 #endif
+	if (TestObservable)
+	{
+		const uint8_t observeOptionData = COAP_OBSERVE_ESTABLISH;
+		assert(0 < coap_add_option(pdu, COAP_OPTION_OBSERVE, sizeof(observeOptionData), &observeOptionData));
+	}
 	if (UsePayload)
 	{
 		println_client("crc of data: {:#010x}", calculateCrc32(LargeData));
@@ -381,10 +409,10 @@ void run_server(bool& exit)
 	assert(ep != nullptr);
 	coap_free_address_info(addr_info);
 
-	coap_resource_t *resource = coap_resource_init(coap_make_str_const("hello"), 0);
-	coap_register_request_handler(resource, COAP_REQUEST_GET,
+	coap_resource_t *resourceHello = coap_resource_init(coap_make_str_const("hello"), 0);
+	coap_register_request_handler(resourceHello, COAP_REQUEST_GET,
 		[] (auto /* resource */, auto /* session */, const coap_pdu_t *request, const coap_string_t *query, coap_pdu_t *response) {
-			println_server("received request:");
+			println_server("received hello request:");
 			std::print("  ");
 			coap_show_pdu(COAP_LOG_WARN, request);
 
@@ -417,22 +445,129 @@ void run_server(bool& exit)
 			coap_pdu_set_code(response, COAP_RESPONSE_CODE_CONTENT);
 			coap_add_data(response, 5, (const uint8_t *)"world");
 
-			println_server("sending response:");
+			println_server("sending hello response:");
 			std::print("  ");
 			coap_show_pdu(COAP_LOG_WARN, response);
 		}
 	);
-	coap_add_resource(serverCtx, resource);
+	coap_add_resource(serverCtx, resourceHello);
 
+	static auto notifyInterval = std::chrono::milliseconds{ 10000 };
+	coap_resource_t *resourceTick = nullptr;
+	if constexpr (TestObservable)
+	{
+		resourceTick = coap_resource_init(coap_make_str_const("tick"), 0);
+		coap_register_request_handler(resourceTick, COAP_REQUEST_GET,
+			[] (auto /* resource */, auto /* session */, const coap_pdu_t *request, const coap_string_t *query, coap_pdu_t *response) {
+				println_server("received tick request:");
+				std::print("  ");
+				coap_show_pdu(COAP_LOG_DEBUG, request);
+
+				bool respondWithData = true;
+
+				{
+					coap_opt_iterator_t it;
+					const coap_opt_filter_t filter = [] {
+						auto filter = coap_opt_filter_t{};
+						coap_option_filter_clear(&filter);
+						coap_option_filter_set(&filter, COAP_OPTION_OBSERVE);
+						return filter;
+					}();
+					//const coap_opt_filter_t filter = { .mask = 1 << COAP_OPT_FILTER_LONG, .short_opts = { COAP_OPTION_OBSERVE } };
+					assert(nullptr != coap_option_iterator_init(request, &it, &filter));
+					const coap_opt_t * const opt = coap_option_next(&it);
+					if (opt != nullptr)
+					{
+						assert(it.number == COAP_OPTION_OBSERVE);
+						assert(coap_opt_length(opt) == 1);
+						const auto value = coap_opt_value(opt);
+						assert(value != nullptr);
+						if (*value == COAP_OBSERVE_CANCEL)
+						{
+							println_server("observation cancellation requested, not returning any data");
+							respondWithData = false;
+						}
+					}
+				}
+
+				// Parse query parameters
+				{
+					auto queryStr = std::string_view{reinterpret_cast<const char *>(query->s), query->length};
+					println_server("query: {}", queryStr);
+
+					char buf[256] = {};
+					size_t bufLen = sizeof(buf);
+					const int segmentCount = coap_split_query(query->s, query->length, reinterpret_cast<uint8_t *>(buf), &bufLen);
+					char *segmentHeader = buf;
+					for (int i = 0; i < segmentCount; i++)
+					{
+						const uint8_t segmentLength = segmentHeader[0];
+						const auto segment = std::string_view{ segmentHeader + 2, segmentLength };
+
+						if (const auto pos = segment.find('=');
+							pos != std::string_view::npos)
+						{
+							const auto key = segment.substr(0, pos);
+							const auto value = segment.substr(pos + 1);
+							println_server("key: {}, value: {}", key, value);
+
+							if (key == "interval")
+							{
+								const auto newInterval = std::chrono::milliseconds{ std::stoul(std::string{ value }) };
+								println_server("new observe interval: {}", newInterval);
+								notifyInterval = newInterval;
+							}
+							else
+							{
+								println_server("WARNING: ignoring unknown parameter");
+							}
+						}
+						else
+						{
+							println_server("segment: {}", segment);
+						}
+
+						segmentHeader += segmentLength + 2;
+					}
+				}
+
+				coap_pdu_set_code(response, COAP_RESPONSE_CODE_CONTENT);
+				if (respondWithData)
+				{
+					coap_add_data(response, 4, (const uint8_t *)"tock");
+				}
+
+				println_server("sending {}tick response:", respondWithData ? "" : "empty ");
+				std::print("  ");
+				coap_show_pdu(COAP_LOG_WARN, response);
+			}
+		);
+		coap_add_resource(serverCtx, resourceTick);
+		coap_resource_set_get_observable(resourceTick, 1);
+	}
+
+	auto lastNotify = std::chrono::steady_clock::now();
 	while (!exit)
 	{
 		//println_server("coap_io_process");
 		coap_io_process(serverCtx, COAP_IO_NO_WAIT);
 		std::this_thread::sleep_for(std::chrono::milliseconds{ 100 });
+
+		if constexpr (TestObservable)
+		{
+			if (const auto now = std::chrono::steady_clock::now();
+				now - lastNotify >= notifyInterval)
+			{
+				println_server("notify after {}", now - lastNotify);
+				coap_resource_notify_observers(resourceTick, nullptr);	// instead of coap_resource_set_dirty() and coap_check_notify()
+				lastNotify = now;
+			}
+		}
 	}
 
 	println_server("exiting");
 
+	coap_persist_stop(serverCtx);
 	coap_free_context(serverCtx);
 	serverCtx = nullptr;
 }
